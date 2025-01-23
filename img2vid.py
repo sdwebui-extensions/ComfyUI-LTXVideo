@@ -10,7 +10,6 @@ import comfy.supported_models_base
 import comfy.utils
 import numpy as np
 import torch
-from ltx_video.models.autoencoders.vae_encode import get_vae_size_scale_factor
 
 
 def encode_single_frame(output_file, image_array: np.ndarray, crf):
@@ -65,6 +64,7 @@ def pad_tensor(tensor, target_len):
 def encode_media_conditioning(
     init_media, vae, width, height, frames_number, image_compression, initial_latent
 ):
+    from ltx_video.models.autoencoders.vae_encode import get_vae_size_scale_factor
     pixels = comfy.utils.common_upscale(
         init_media.movedim(-1, 1), width, height, "bilinear", ""
     ).movedim(1, -1)

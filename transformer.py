@@ -8,7 +8,6 @@ import comfy.sd
 import comfy.supported_models_base
 import comfy.utils
 import torch
-from ltx_video.models.autoencoders.vae_encode import get_vae_size_scale_factor
 
 from .img2vid import encode_media_conditioning
 from .model import LTXVSampling
@@ -121,6 +120,7 @@ class LTXVModelConfigurator:
     def latent_shape_and_frame_rate(
         self, vae, batch, height, width, frames_number, frame_rate
     ):
+        from ltx_video.models.autoencoders.vae_encode import get_vae_size_scale_factor
         video_scale_factor, vae_scale_factor, _ = get_vae_size_scale_factor(
             vae.first_stage_model
         )
@@ -156,6 +156,7 @@ class LTXVModelConfigurator:
         conditioning=None,
         initial_latent=None,
     ):
+        from ltx_video.models.autoencoders.vae_encode import get_vae_size_scale_factor
         load_device = comfy.model_management.get_torch_device()
         if preset != "Custom":
             preset = preset.split("|")

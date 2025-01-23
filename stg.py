@@ -2,7 +2,6 @@ import comfy.samplers
 import comfy.utils
 import torch
 from comfy.model_patcher import ModelPatcher
-from ltx_video.utils.skip_layer_strategy import SkipLayerStrategy
 
 from .nodes_registry import comfy_node
 
@@ -54,6 +53,7 @@ class LTXVApplySTG:
     CATEGORY = "lightricks/LTXV"
 
     def apply_stg(self, model: ModelPatcher, stg_mode: str, block_indices: str):
+        from ltx_video.utils.skip_layer_strategy import SkipLayerStrategy
         skip_block_list = [int(i.strip()) for i in block_indices.split(",")]
         stg_mode = (
             SkipLayerStrategy.Attention

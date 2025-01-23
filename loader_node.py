@@ -7,11 +7,7 @@ import comfy.model_patcher
 import folder_paths
 import safetensors.torch
 import torch
-from ltx_video.models.autoencoders.causal_video_autoencoder import (
-    CausalVideoAutoencoder,
-)
-from ltx_video.models.transformers.symmetric_patchifier import SymmetricPatchifier
-from ltx_video.models.transformers.transformer3d import Transformer3DModel
+
 from safetensors import safe_open
 
 from .model import LTXVModel, LTXVModelConfig, LTXVTransformer3D
@@ -74,6 +70,7 @@ class LTXVLoader:
         return (model, vae)
 
     def _load_vae(self, weights, config=None):
+        from ltx_video.models.autoencoders.causal_video_autoencoder import CausalVideoAutoencoder
         if not config:
             config = {
                 "_class_name": "CausalVideoAutoencoder",
@@ -121,6 +118,8 @@ class LTXVLoader:
         dtype,
         config=None,
     ):
+        from ltx_video.models.transformers.symmetric_patchifier import SymmetricPatchifier
+        from ltx_video.models.transformers.transformer3d import Transformer3DModel
         if not config:
             config = {
                 "_class_name": "Transformer3DModel",

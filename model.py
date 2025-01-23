@@ -11,8 +11,6 @@ import comfy.supported_models_base
 import comfy.utils
 import torch
 import torch.nn as nn
-from ltx_video.models.transformers.symmetric_patchifier import SymmetricPatchifier
-from ltx_video.models.transformers.transformer3d import Transformer3DModel
 
 
 class LTXVModelConfig:
@@ -109,8 +107,8 @@ class LTXVModel(comfy.model_base.BaseModel):
 class LTXVTransformer3D(nn.Module):
     def __init__(
         self,
-        transformer: Transformer3DModel,
-        patchifier: SymmetricPatchifier,
+        transformer,
+        patchifier,
         conditioning_mask,
         latent_frame_rate,
         vae_scale_factor,

@@ -9,11 +9,6 @@ import comfy.supported_models_base
 import comfy.utils
 import torch
 from diffusers.image_processor import VaeImageProcessor
-from ltx_video.models.autoencoders.vae_encode import (
-    get_vae_size_scale_factor,
-    vae_decode,
-    vae_encode,
-)
 
 from .nodes_registry import comfy_node
 
@@ -50,6 +45,7 @@ class LTXVVAE(comfy.sd.VAE):
         return instance
 
     def _finalize_model(self, model):
+        from ltx_video.models.autoencoders.vae_encode import get_vae_size_scale_factor
         self.video_scale_factor, self.vae_scale_factor, _ = get_vae_size_scale_factor(
             model
         )
@@ -59,6 +55,7 @@ class LTXVVAE(comfy.sd.VAE):
     # Assumes that the input samples have dimensions in following order
     # (batch, channels, frames, height, width)
     def decode(self, samples_in):
+        from ltx_video.models.autoencoders.vae_encode import vae_decode
         is_video = samples_in.shape[2] > 1
         decode_timestep = self.decode_timestep
         if getattr(self.first_stage_model.decoder, "timestep_conditioning", False):
@@ -106,6 +103,7 @@ class LTXVVAE(comfy.sd.VAE):
     # Underlying VAE expects b, c, n, h, w dimensions order and dtype specific dtype.
     # However in Comfy the convension is n, h, w, c.
     def encode(self, pixel_samples):
+        from ltx_video.models.autoencoders.vae_encode import vae_encode
         preprocessed = self.image_processor.preprocess(
             pixel_samples.permute(3, 0, 1, 2)
         )
