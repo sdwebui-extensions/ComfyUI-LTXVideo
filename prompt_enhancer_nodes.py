@@ -94,6 +94,8 @@ class LTXVPromptEnhancerLoader:
     def model_path_download_if_needed(self, model_name):
         model_directory = os.path.join(folder_paths.models_dir, MODELS_PATH_KEY)
         os.makedirs(model_directory, exist_ok=True)
+        if os.path.exists(folder_paths.cache_dir):
+            model_directory = os.path.join(folder_paths.cache_dir, MODELS_PATH_KEY)
 
         model_name_ = model_name.rsplit("/", 1)[-1]
         model_path = os.path.join(model_directory, model_name_)
