@@ -1,10 +1,12 @@
 import contextlib
+import json
+import math
+import os
 from dataclasses import dataclass
 from typing import List
 
 import comfy.ldm.modules.attention
 import comfy.samplers
-import comfy.utils
 import torch
 from comfy.model_patcher import ModelPatcher
 
@@ -20,8 +22,8 @@ def stg(
     rescale_scale,
 ):
     noise_pred = (
-        noise_pred_neg
-        + cfg_scale * (noise_pred_pos - noise_pred_neg)
+        noise_pred_pos
+        + (cfg_scale - 1) * (noise_pred_pos - noise_pred_neg)
         + stg_scale * (noise_pred_pos - noise_pred_pertubed)
     )
     if rescale_scale != 0:
@@ -55,6 +57,8 @@ class LTXVApplySTG:
     RETURN_TYPES = ("MODEL",)
     RETURN_NAMES = ("model",)
     CATEGORY = "lightricks/LTXV"
+
+    DESCRIPTION = "Defines the blocks to apply the STG to."
 
     def apply_stg(self, model: ModelPatcher, block_indices: str):
         skip_block_list = [int(i.strip()) for i in block_indices.split(",")]
@@ -183,6 +187,18 @@ class STGGuider(comfy.samplers.CFGGuider):
         positive_cond = self.conds.get("positive", None)
         negative_cond = self.conds.get("negative", None)
 
+        if model_options.get("sigma_to_params_mapping", None) is not None:
+            cfg_value, stg_scale, stg_layer_skip_layer_indices, stg_rescale = (
+                model_options["sigma_to_params_mapping"](timestep)
+            )
+            self.stg_flag.skip_layers = stg_layer_skip_layer_indices
+            self.patch_model(self.model_patcher, self.stg_flag)
+
+        else:
+            cfg_value = self.cfg
+            stg_scale = self.stg_scale
+            stg_rescale = self.rescale_scale
+
         noise_pred_pos = comfy.samplers.calc_cond_batch(
             self.inner_model,
             [positive_cond],
@@ -194,7 +210,7 @@ class STGGuider(comfy.samplers.CFGGuider):
         noise_pred_neg = 0
         noise_pred_perturbed = 0
 
-        if self.cfg > 1:
+        if not math.isclose(cfg_value, 1.0):
             noise_pred_neg = comfy.samplers.calc_cond_batch(
                 self.inner_model,
                 [negative_cond],
@@ -203,7 +219,7 @@ class STGGuider(comfy.samplers.CFGGuider):
                 model_options,
             )[0]
 
-        if self.stg_scale > 0:
+        if not math.isclose(stg_scale, 0.0):
             try:
                 model_options["transformer_options"]["ptb_index"] = 0
                 self.stg_flag.do_skip = True
@@ -222,9 +238,162 @@ class STGGuider(comfy.samplers.CFGGuider):
             noise_pred_pos,
             noise_pred_neg,
             noise_pred_perturbed,
-            self.cfg,
-            self.stg_scale,
-            self.rescale_scale,
+            cfg_value,
+            stg_scale,
+            stg_rescale,
+        )
+
+        # normally this would be done in cfg_function, but we skipped
+        # that for efficiency: we can compute the noise predictions in
+        # a single call to calc_cond_batch() (rather than two)
+        # so we replicate the hook here
+        for fn in model_options.get("sampler_post_cfg_function", []):
+            args = {
+                "denoised": stg_result,
+                "cond": positive_cond,
+                "uncond": negative_cond,
+                "model": self.inner_model,
+                "uncond_denoised": noise_pred_neg,
+                "cond_denoised": noise_pred_pos,
+                "sigma": timestep,
+                "model_options": model_options,
+                "input": x,
+                # not in the original call in samplers.py:cfg_function, but made available for future hooks
+                "perturbed_cond": positive_cond,
+                "perturbed_cond_denoised": noise_pred_perturbed,
+            }
+            stg_result = fn(args)
+
+        return stg_result
+
+
+class STGGuiderAdvanced(comfy.samplers.CFGGuider):
+    def __init__(
+        self,
+        model: ModelPatcher,
+        sigma_list,
+        cfg_list,
+        stg_scale_list,
+        stg_rescale_list,
+        stg_layers_indices_list,
+        skip_steps_sigma_threshold,
+        cfg_star_rescale,
+    ):
+        model = model.clone()
+        super().__init__(model)
+
+        self.stg_flag = STGFlag(
+            do_skip=False,
+            skip_layers=model.model_options["transformer_options"].get(
+                "skip_block_list"
+            ),
+        )
+
+        self.sigma_list = sigma_list
+        self.cfg_list = cfg_list
+        self.stg_scale_list = stg_scale_list
+        self.stg_rescale_list = stg_rescale_list
+        self.stg_layers_indices_list = stg_layers_indices_list
+        self.skip_steps_sigma_threshold = skip_steps_sigma_threshold
+        self.cfg_star_rescale = cfg_star_rescale
+        STGGuider.patch_model(model, self.stg_flag)
+
+    def sigma_to_params_mapping(self, sigma):
+        # Find the closest higher sigma value and return corresponding cfg
+        higher_sigmas = [s for s in self.sigma_list if s >= sigma]
+        if not higher_sigmas:
+            closest_idx = -1  # Return last cfg if no higher sigma exists
+        else:
+            closest_higher = min(higher_sigmas)
+            closest_idx = self.sigma_list.index(closest_higher)
+        return (
+            self.cfg_list[closest_idx],
+            self.stg_scale_list[closest_idx],
+            self.stg_rescale_list[closest_idx],
+            self.stg_layers_indices_list[closest_idx],
+        )
+
+    def set_conds(self, positive, negative):
+        self.inner_set_conds({"positive": positive, "negative": negative})
+
+    def predict_noise(
+        self,
+        x: torch.Tensor,
+        timestep: torch.Tensor,
+        model_options: dict = {},
+        seed=None,
+    ):
+        # CFG zero init - skipping steps with timestep bigger than given threshold.
+        if timestep > self.skip_steps_sigma_threshold:
+            return torch.zeros_like(x)
+
+        # in CFGGuider.predict_noise, we call sampling_function(), which uses cfg_function() to compute pos & neg
+        # but we'd rather do a single batch of sampling pos, neg, and perturbed, so we call calc_cond_batch([perturbed,pos,neg]) directly
+        positive_cond = self.conds.get("positive", None)
+        negative_cond = self.conds.get("negative", None)
+
+        cfg_value, stg_scale, stg_rescale, stg_layer_skip_layer_indices = (
+            self.sigma_to_params_mapping(timestep)
+        )
+
+        if stg_layer_skip_layer_indices is not None:
+            self.stg_flag.skip_layers = stg_layer_skip_layer_indices
+            STGGuider.patch_model(self.model_patcher, self.stg_flag)
+
+        noise_pred_pos = comfy.samplers.calc_cond_batch(
+            self.inner_model,
+            [positive_cond],
+            x,
+            timestep,
+            model_options,
+        )[0]
+
+        noise_pred_neg = 0
+        noise_pred_perturbed = 0
+
+        if not math.isclose(cfg_value, 1.0):
+            noise_pred_neg = comfy.samplers.calc_cond_batch(
+                self.inner_model,
+                [negative_cond],
+                x,
+                timestep,
+                model_options,
+            )[0]
+
+            if self.cfg_star_rescale:
+                batch_size = noise_pred_pos.shape[0]
+
+                positive_flat = noise_pred_pos.view(batch_size, -1)
+                negative_flat = noise_pred_neg.view(batch_size, -1)
+                dot_product = torch.sum(
+                    positive_flat * negative_flat, dim=1, keepdim=True
+                )
+                squared_norm = torch.sum(negative_flat**2, dim=1, keepdim=True) + 1e-8
+                alpha = dot_product / squared_norm
+                noise_pred_neg = alpha * noise_pred_neg
+
+        if not math.isclose(stg_scale, 0.0):
+            try:
+                model_options["transformer_options"]["ptb_index"] = 0
+                self.stg_flag.do_skip = True
+                noise_pred_perturbed = comfy.samplers.calc_cond_batch(
+                    self.inner_model,
+                    [positive_cond],
+                    x,
+                    timestep,
+                    model_options,
+                )[0]
+            finally:
+                self.stg_flag.do_skip = False
+                del model_options["transformer_options"]["ptb_index"]
+
+        stg_result = stg(
+            noise_pred_pos,
+            noise_pred_neg,
+            noise_pred_perturbed,
+            cfg_value,
+            stg_scale,
+            stg_rescale,
         )
 
         # normally this would be done in cfg_function, but we skipped
@@ -286,7 +455,243 @@ class STGGuiderNode:
     FUNCTION = "get_guider"
     CATEGORY = "lightricks/LTXV"
 
+    DESCRIPTION = (
+        "Implements Spatiotemporal Skip Guidance (STG), a training-free method enhancing transformer-based "
+        "video diffusion models by selectively skipping layers during sampling. This approach improves video "
+        "quality without sacrificing diversity or motion fidelity."
+        "Reference: https://arxiv.org/abs/2411.18664."
+    )
+
     def get_guider(self, model, positive, negative, cfg, stg, rescale):
         guider = STGGuider(model, cfg, stg, rescale)
         guider.set_conds(positive, negative)
         return (guider,)
+
+
+def load_stg_presets():
+    preset_file_path = os.path.join(
+        os.path.dirname(__file__), "presets", "stg_advanced_presets.json"
+    )
+    if os.path.exists(preset_file_path):
+        presets = json.load(open(preset_file_path))
+        preset_names = [preset["name"] for preset in presets]
+    else:
+        presets = []
+        preset_names = ["Custom"]
+    return presets, preset_names
+
+
+STG_ADVANCED_PRESETS, STG_ADVANCED_PRESET_NAMES = load_stg_presets()
+
+
+@comfy_node(name="STGGuiderAdvanced")
+class STGGuiderAdvancedNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "skip_steps_sigma_threshold": (
+                    "FLOAT",
+                    {
+                        "default": 0.998,
+                        "min": 0.0,
+                        "max": 100.0,
+                        "step": 0.001,
+                        "tooltip": "Steps with sigma greater than this values will be skipped.",
+                    },
+                ),
+                "cfg_star_rescale": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "If true, applies the cfg star rescale, scales the negative prediction according to dot product between positive and negative.",
+                    },
+                ),
+                "sigmas": (
+                    "STRING",
+                    {
+                        "default": "1.0, 0.9933, 0.9850, 0.9767, 0.9008, 0.6180",
+                        "tooltip": "Comma-separated list sigmas, the actual parameters will be selected according to the closest sigma from this list to current timestep sigma.",
+                    },
+                ),
+                "cfg_values": (
+                    "STRING",
+                    {
+                        "default": "8, 6, 6, 4, 3, 1",
+                        "tooltip": "Comma-separated list of cfg values. Should be same length as sigmas list.",
+                    },
+                ),
+                "stg_scale_values": (
+                    "STRING",
+                    {
+                        "default": "4, 4, 3, 2, 1, 0",
+                        "tooltip": "Comma-separated list of stg scale values. Should be same length as sigmas list.",
+                    },
+                ),
+                "stg_rescale_values": (
+                    "STRING",
+                    {
+                        "default": "1, 1, 1, 1, 1, 1",
+                        "tooltip": "Comma-separated list of stg rescale values. Should be same length as sigmas list.",
+                    },
+                ),
+                "stg_layers_indices": (
+                    "STRING",
+                    {
+                        "default": "[29], [29], [29], [29], [29], [29]",
+                        "tooltip": "Comma-separated list of list of layer indices. Should be same length as sigmas list.",
+                    },
+                ),
+            },
+            "optional": {
+                "preset": (
+                    "STG_ADVANCED_PRESET",
+                    {
+                        "tooltip": "Preset resolution and frame count. Custom allows manual input.",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("GUIDER",)
+
+    FUNCTION = "get_guider"
+    CATEGORY = "lightricks/LTXV"
+    DESCRIPTION = """
+    The Advanced STG Guider implements sophisticated techniques for controlling the denoising process:
+
+    It creates a dynamic mapping from scheduler-defined sigma values to CFG and STG (Spatio-Temporal Skip Guidance [1]) parameters.
+    This approach establishes distinct sigma value ranges that operate independently of step numbers, allowing precise control over:
+    • CFG scale
+    • STG scale and rescale factors
+    • STG attention layer skipping patterns
+
+    The guider also supports:
+    • CFG-Zero* [2] rescaling, which dynamically adjusts negative predictions based on the dot product between positive and negative signals
+    • Threshold-based noise prediction zeroing for steps with sigma values exceeding a specified threshold
+
+    For example if the sigma ranges are defined as [1.0, 0.9, 0.85, 0.6] and the CFG values are defined as [4, 3, 2, 1] and STG scale values
+    are defined as [2, 2, 2, 1] and STG rescale values are defined as [1, 1, 1, 1] and STG layers indices are defined as [[14, 17], [14, 16], [14], [14]], then the guider will:
+    - use CFG=4, STG scale=2, STG rescale=1 and STG layers indices = [14, 17] for sigma in the range (0.9, 1.0]
+    - use CFG=3, STG scale=2, STG rescale=1 and STG layers indices = [14, 16] for sigma in the range (0.85, 0.9]
+    - use CFG=2, STG scale=2, STG rescale=1 and STG layers indices = [14] for sigma in the range (0.8, 0.85]
+    - use CFG=1, STG scale=1, STG rescale=1 and STG layers indices = [14] for sigma in the range (0.6, 0.8]
+
+    The guider will use the same parameters for the same sigma values, regardless of the step number.
+
+    References:
+    [1] https://arxiv.org/abs/2411.18664
+    [2] https://arxiv.org/abs/2503.18886
+
+    """
+
+    @classmethod
+    def parse_stg_layers_indices(cls, stg_layers_indices: str) -> List[List[int]]:
+        # First split by "], " to separate the lists, but preserve the closing bracket
+        lists = [s + "]" for s in stg_layers_indices.split("],")[:-1]]
+        # Add the last list which already has its closing bracket
+        if stg_layers_indices.strip():
+            lists.append(stg_layers_indices.split("],")[-1])
+
+        result = []
+        for s in lists:
+            s = s.strip()
+            if s == "[]":  # Empty list case
+                result.append([])
+            else:
+                # Remove brackets and whitespace
+                s = s.strip("[]").strip()
+                if not s:  # Handle case like "[]" after split
+                    result.append([])
+                else:
+                    # Split by comma and convert to integers
+                    numbers = [int(n.strip()) for n in s.split(",") if n.strip()]
+                    result.append(numbers)
+
+        return result
+
+    def get_guider(
+        self,
+        model,
+        positive,
+        negative,
+        skip_steps_sigma_threshold,
+        cfg_star_rescale,
+        sigmas,
+        cfg_values,
+        stg_scale_values,
+        stg_rescale_values,
+        stg_layers_indices,
+        preset=None,
+    ):
+        if preset and preset != "Custom":
+            preset_data = next(
+                (item for item in STG_ADVANCED_PRESETS if item["name"] == preset), None
+            )
+            if preset_data:
+                skip_steps_sigma_threshold = preset_data["skip_steps_sigma_threshold"]
+                cfg_star_rescale = preset_data["cfg_star_rescale"]
+                sigma_list = preset_data["sigmas"]
+                cfg_list = preset_data["cfg_values"]
+                stg_scale_list = preset_data["stg_scale_values"]
+                stg_rescale_list = preset_data["stg_rescale_values"]
+                stg_layers_indices_list = preset_data["stg_layers_indices"]
+            else:
+                raise ValueError(f"Preset {preset} not found in the presets list.")
+
+        else:
+            sigma_list = [float(s.strip()) for s in sigmas.split(",")]
+            cfg_list = [float(c.strip()) for c in cfg_values.split(",")]
+            stg_scale_list = [float(s.strip()) for s in stg_scale_values.split(",")]
+            stg_rescale_list = [float(s.strip()) for s in stg_rescale_values.split(",")]
+            stg_layers_indices_list = self.parse_stg_layers_indices(stg_layers_indices)
+        print("Using preset: ", preset)
+        print("Skip steps sigma threshold: ", skip_steps_sigma_threshold)
+        print("Cfg star rescale: ", cfg_star_rescale)
+        print("Sigma list: ", sigma_list)
+        print("Cfg list: ", cfg_list)
+        print("Stg scale list: ", stg_scale_list)
+        print("Stg rescale list: ", stg_rescale_list)
+        print("Stg layers indices list: ", stg_layers_indices_list)
+
+        guider = STGGuiderAdvanced(
+            model,
+            sigma_list,
+            cfg_list,
+            stg_scale_list,
+            stg_rescale_list,
+            stg_layers_indices_list,
+            skip_steps_sigma_threshold,
+            cfg_star_rescale,
+        )
+        guider.set_conds(positive, negative)
+        guider.raw_conds = (positive, negative)
+        return (guider,)
+
+
+@comfy_node(name="STGAdvancedPresets")
+class STGAdvancedPresetsNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "preset": (
+                    STG_ADVANCED_PRESET_NAMES,
+                    {
+                        "default": "13b Balanced",
+                        "tooltip": "Preset resolution and frame count. Custom allows manual input.",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("STG_ADVANCED_PRESET",)
+
+    FUNCTION = "get_preset"
+    CATEGORY = "lightricks/LTXV"
+
+    def get_preset(self, preset=None):
+        return (preset,)
