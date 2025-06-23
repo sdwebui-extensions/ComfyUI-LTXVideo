@@ -5,13 +5,14 @@ from .guide import LTXVAddGuideAdvanced
 from .latent_adain import LTXVAdainLatent
 from .latent_upsampler import LTXVLatentUpsampler
 from .latents import LTXVSelectLatents, LTXVSetVideoLatentNoiseMasks
+from .masks import LTXVPreprocessMasks
 from .nodes_registry import NODE_CLASS_MAPPINGS as RUNTIME_NODE_CLASS_MAPPINGS
 from .nodes_registry import (
     NODE_DISPLAY_NAME_MAPPINGS as RUNTIME_NODE_DISPLAY_NAME_MAPPINGS,
 )
 from .nodes_registry import NODES_DISPLAY_NAME_PREFIX, camel_case_to_spaces
 from .prompt_enhancer_nodes import LTXVPromptEnhancer, LTXVPromptEnhancerLoader
-from .q8_nodes import LTXVQ8Patch
+from .q8_nodes import LTXVQ8LoraModelLoader, LTXVQ8Patch
 from .recurrent_sampler import LinearOverlapLatentTransition, LTXVRecurrentKSampler
 from .stg import (
     LTXVApplySTG,
@@ -22,6 +23,7 @@ from .stg import (
 from .tiled_sampler import LTXVTiledSampler
 from .tricks import NODE_CLASS_MAPPINGS as TRICKS_NODE_CLASS_MAPPINGS
 from .tricks import NODE_DISPLAY_NAME_MAPPINGS as TRICKS_NODE_DISPLAY_NAME_MAPPINGS
+from .vae_patcher.vae_patcher import LTXVPatcherVAE
 
 # Static node mappings, required for ComfyUI-Manager mapping to work
 NODE_CLASS_MAPPINGS = {
@@ -32,10 +34,13 @@ NODE_CLASS_MAPPINGS = {
     "LTXVApplySTG": LTXVApplySTG,
     "LTXVBaseSampler": LTXVBaseSampler,
     "LTXVFilmGrain": LTXVFilmGrain,
+    "LTXVPreprocessMasks": LTXVPreprocessMasks,
     "LTXVLatentUpsampler": LTXVLatentUpsampler,
+    "LTXVPatcherVAE": LTXVPatcherVAE,
     "LTXVPromptEnhancer": LTXVPromptEnhancer,
     "LTXVPromptEnhancerLoader": LTXVPromptEnhancerLoader,
     "LTXQ8Patch": LTXVQ8Patch,
+    "LTXVQ8LoraModelLoader": LTXVQ8LoraModelLoader,
     "LTXVRecurrentKSampler": LTXVRecurrentKSampler,
     "LTXVSelectLatents": LTXVSelectLatents,
     "LTXVSetVideoLatentNoiseMasks": LTXVSetVideoLatentNoiseMasks,
