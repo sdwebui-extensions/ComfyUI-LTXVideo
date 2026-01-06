@@ -1,16 +1,33 @@
 from .decoder_noise import DecoderNoise
+from .dynamic_conditioning import DynamicConditioning
 from .easy_samplers import (
     LinearOverlapLatentTransition,
     LTXVBaseSampler,
     LTXVExtendSampler,
     LTXVInContextSampler,
 )
-from .film_grain import LTXVFilmGrain
+from .gemma_encoder import LTXVGemmaCLIPModelLoader, LTXVGemmaEnhancePrompt
+from .gemma_encoder_mgpu_loader import LTXVGemmaCLIPModelLoaderMGPU
 from .guide import LTXVAddGuideAdvanced
-from .latent_adain import LTXVAdainLatent
-from .latent_upsampler import LTXVLatentUpsampler
-from .latents import LTXVSelectLatents, LTXVSetVideoLatentNoiseMasks
+from .guiders import GuiderParametersNode, MultimodalGuiderNode
+from .latent_norm import (
+    LTXVAdainLatent,
+    LTXVPerStepAdainPatcher,
+    LTXVPerStepStatNormPatcher,
+    LTXVStatNormLatent,
+)
+from .latents import (
+    LTXVAddLatentGuide,
+    LTXVImgToVideoConditionOnly,
+    LTXVSelectLatents,
+    LTXVSetVideoLatentNoiseMasks,
+)
 from .looping_sampler import LTXVLoopingSampler, MultiPromptProvider
+from .low_vram_loaders import (
+    LowVRAMAudioVAELoader,
+    LowVRAMCheckpointLoader,
+    LowVRAMLatentUpscaleModelLoader,
+)
 from .masks import LTXVPreprocessMasks
 from .nodes_registry import NODE_CLASS_MAPPINGS as RUNTIME_NODE_CLASS_MAPPINGS
 from .nodes_registry import (
@@ -30,21 +47,22 @@ from .tiled_vae_decode import LTXVTiledVAEDecode
 from .tricks import NODE_CLASS_MAPPINGS as TRICKS_NODE_CLASS_MAPPINGS
 from .tricks import NODE_DISPLAY_NAME_MAPPINGS as TRICKS_NODE_DISPLAY_NAME_MAPPINGS
 from .utiltily_nodes import ImageToCPU
-from .vae_patcher.vae_patcher import LTXVPatcherVAE
+from .vae_patcher import LTXVPatcherVAE
 
 # Static node mappings, required for ComfyUI-Manager mapping to work
 NODE_CLASS_MAPPINGS = {
     "Set VAE Decoder Noise": DecoderNoise,
     "LTXVLinearOverlapLatentTransition": LinearOverlapLatentTransition,
     "LTXVAddGuideAdvanced": LTXVAddGuideAdvanced,
+    "LTXVAddLatentGuide": LTXVAddLatentGuide,
     "LTXVAdainLatent": LTXVAdainLatent,
+    "LTXVImgToVideoConditionOnly": LTXVImgToVideoConditionOnly,
+    "LTXVPerStepAdainPatcher": LTXVPerStepAdainPatcher,
     "LTXVApplySTG": LTXVApplySTG,
     "LTXVBaseSampler": LTXVBaseSampler,
     "LTXVInContextSampler": LTXVInContextSampler,
     "LTXVExtendSampler": LTXVExtendSampler,
-    "LTXVFilmGrain": LTXVFilmGrain,
     "LTXVPreprocessMasks": LTXVPreprocessMasks,
-    "LTXVLatentUpsampler": LTXVLatentUpsampler,
     "LTXVPatcherVAE": LTXVPatcherVAE,
     "LTXVPromptEnhancer": LTXVPromptEnhancer,
     "LTXVPromptEnhancerLoader": LTXVPromptEnhancerLoader,
@@ -55,11 +73,22 @@ NODE_CLASS_MAPPINGS = {
     "LTXVTiledSampler": LTXVTiledSampler,
     "LTXVLoopingSampler": LTXVLoopingSampler,
     "LTXVTiledVAEDecode": LTXVTiledVAEDecode,
+    "MultimodalGuider": MultimodalGuiderNode,
+    "GuiderParameters": GuiderParametersNode,
     "STGAdvancedPresets": STGAdvancedPresetsNode,
     "STGGuiderAdvanced": STGGuiderAdvancedNode,
     "STGGuiderNode": STGGuiderNode,
     "LTXVMultiPromptProvider": MultiPromptProvider,
     "ImageToCPU": ImageToCPU,
+    "LTXVStatNormLatent": LTXVStatNormLatent,
+    "LTXVPerStepStatNormPatcher": LTXVPerStepStatNormPatcher,
+    "LTXVGemmaCLIPModelLoader": LTXVGemmaCLIPModelLoader,
+    "LTXVGemmaCLIPModelLoaderMGPU": LTXVGemmaCLIPModelLoaderMGPU,
+    "LTXVGemmaEnhancePrompt": LTXVGemmaEnhancePrompt,
+    "DynamicConditioning": DynamicConditioning,
+    "LowVRAMCheckpointLoader": LowVRAMCheckpointLoader,
+    "LowVRAMAudioVAELoader": LowVRAMAudioVAELoader,
+    "LowVRAMLatentUpscaleModelLoader": LowVRAMLatentUpscaleModelLoader,
 }
 
 # Consistent display names between static and dynamic node mappings in nodes_registry.py,

@@ -13,7 +13,7 @@ def blur_internal(image, blur_radius):
         # relationship between sigma and kernel size 2*blur_radius + 1, however we want somewhat weaker
         # blurring, so we use 0.3 * blur_radius instead, reducing the sigma value by 0.5
         sigma = 0.3 * blur_radius
-        image = post_processing.Blur().blur(image, blur_radius, sigma)[0]
+        image = post_processing.Blur.execute(image, blur_radius, sigma)[0]
     return image
 
 
@@ -124,9 +124,9 @@ class LTXVAddGuideAdvanced:
             .movedim(1, -1)
             .clamp(0, 1)
         )
-        image = nodes_lt.LTXVPreprocess().preprocess(image, crf)[0]
+        image = nodes_lt.LTXVPreprocess().execute(image, crf)[0]
         image = blur_internal(image, blur_radius)
-        return nodes_lt.LTXVAddGuide().generate(
+        return nodes_lt.LTXVAddGuide().execute(
             positive=positive,
             negative=negative,
             vae=vae,
@@ -239,9 +239,9 @@ class LTXVImgToVideoAdvanced:
         image = comfy.utils.common_upscale(
             image.movedim(-1, 1), width, height, interpolation, crop=crop
         ).movedim(1, -1)
-        image = nodes_lt.LTXVPreprocess().preprocess(image, crf)[0]
+        image = nodes_lt.LTXVPreprocess().execute(image, crf)[0]
         image = blur_internal(image, blur_radius)
-        return nodes_lt.LTXVImgToVideo().generate(
+        return nodes_lt.LTXVImgToVideo().execute(
             positive=positive,
             negative=negative,
             vae=vae,

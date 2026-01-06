@@ -11,16 +11,22 @@ license = { file = "LICENSE" }
 dependencies = [
     "diffusers",
     "huggingface_hub>=0.25.2",
-    "transformers[timm]>=4.45.0",
+    "transformers[timm]>=4.50.0",
     "einops",
-    "ninja~=1.11.1.4"
+    "ninja~=1.11.1.4",
+    "accelerate"
 ]
 
 [project.optional-dependencies]
 internal = [
     "ltx-video@git+https://github.com/Lightricks/LTX-Video@ltx-video-0.9.1",
+    "ltx-media-io>=0.1.26",
     "av>=10.0.0",
-    "q8-kernels~=0.1.0"
+    "q8-kernels~=0.1.4",
+    "ring_buffer==0.0.9",
+    "ltx-multigpu-inference~=0.0.13",
+    "bitsandbytes",
+    "ultralytics"
 ]
 dev = [
     "pre-commit>=4.0.1",
@@ -28,6 +34,18 @@ dev = [
     "websocket-client==1.6.1",
     "scikit-image==0.24.0"
 ]
+
+[tool.uv.sources]
+ltx-video@git+https://github.com/Lightricks/LTX-Video@ltx-video-0.9.1",
+ring-buffer = {index = "ltx"}
+
+[[tool.uv.index]]
+name = "ltx"
+url = "https://oauth2accesstoken@us-python.pkg.dev/ltx-artifact-registry/pypi-gar/simple"
+default = false
+
+[tool.uv]
+keyring-provider = "subprocess"
 
 [tool.isort]
 profile = "black"
